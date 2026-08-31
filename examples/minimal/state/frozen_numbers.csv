@@ -1,0 +1,2 @@
+claim_id,question,claim_text,metric,value,unit,source_file,source_column,filter,run_id,status,display_value,evidence_type,round_digits,tolerance_abs,tolerance_rel,notes
+C001,问题一,测试集 RMSE 为 1.23,RMSE,1.23,,results/metrics.csv,RMSE,model=baseline;split=test,run-2026-01,frozen,1.23,model_output,,,,

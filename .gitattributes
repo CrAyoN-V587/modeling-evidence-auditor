@@ -1,0 +1,4 @@
+*.csv text working-tree-encoding=UTF-8
+*.md text working-tree-encoding=UTF-8
+*.toml text working-tree-encoding=UTF-8
+*.py text working-tree-encoding=UTF-8

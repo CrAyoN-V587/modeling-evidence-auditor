@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modeling-evidence-auditor"
+version = "0.1.0"
+description = "Offline, deterministic evidence auditing for quantitative claims in DOCX modeling reports"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "modeling-evidence-auditor contributors" }]
+dependencies = [
+  "lxml>=5.2",
+]
+keywords = ["mathematical-modeling", "docx", "provenance", "audit", "reproducibility"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "hypothesis>=6.100",
+  "pytest>=8.0",
+  "python-docx>=1.1",
+  "ruff>=0.8",
+]
+
+[project.scripts]
+mea = "modeling_evidence_auditor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

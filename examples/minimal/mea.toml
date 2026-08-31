@@ -1,0 +1,7 @@
+schema_version = 1
+manuscript = "paper/final.docx"
+registry = "state/frozen_numbers.csv"
+mapping = "state/claim_map.csv"
+output_dir = "build"
+ignore_years = true
+require_frozen = true
