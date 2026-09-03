@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 
 from .models import NumberToken
 
@@ -42,6 +42,10 @@ _UNIT_ALIASES = {
 }
 
 
+class NonFiniteNumberError(ValueError):
+    """A parsed decimal is NaN or infinite and cannot enter the audit contract."""
+
+
 def normalize_unit(value: str) -> str:
     """Return a conservative, comparable unit spelling."""
 
@@ -58,9 +62,12 @@ def parse_decimal(value: str) -> Decimal:
 
     cleaned = value.strip().replace(",", "")
     try:
-        return Decimal(cleaned)
-    except InvalidOperation as exc:
+        parsed = Decimal(cleaned)
+    except DecimalException as exc:
         raise ValueError(f"无法解析数值：{value!r}") from exc
+    if not parsed.is_finite():
+        raise NonFiniteNumberError(f"数值必须是有限值：{value!r}")
+    return parsed
 
 
 def parse_number_text(value: str) -> tuple[Decimal, str]:

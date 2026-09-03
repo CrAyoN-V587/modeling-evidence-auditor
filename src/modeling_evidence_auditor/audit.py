@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections import defaultdict
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from .config import safe_project_path
 from .csv_data import load_mapping, load_registry, resolve_csv_evidence
 from .docx_extract import scan_docx
+from .matching import candidate_matches, compare_value, format_decimal, normalize_text, units_equal
 from .models import (
     AuditResult,
     ClaimOccurrence,
@@ -19,68 +17,6 @@ from .models import (
     Finding,
     ProjectConfig,
 )
-from .normalize import normalize_unit
-
-
-def _clean_context(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value)).strip()
-
-
-def _clean_display(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value)).strip()
-
-
-def _format_decimal(value: Decimal | None) -> str:
-    if value is None:
-        return ""
-    return format(value, "f")
-
-
-def _units_equal(actual: str, expected: str) -> bool:
-    return normalize_unit(actual) == normalize_unit(expected)
-
-
-def _compare_value(actual: Decimal, claim: ClaimRecord) -> str:
-    if actual == claim.value:
-        return "exact"
-    if claim.round_digits is not None:
-        exponent = Decimal(1).scaleb(-claim.round_digits)
-        try:
-            expected_rounded = claim.value.quantize(exponent, rounding=ROUND_HALF_UP)
-        except InvalidOperation:
-            expected_rounded = claim.value
-        # Compare against the rounded target rather than rounding an arbitrary
-        # manuscript value. Decimal-equivalent spellings such as 2.350 remain
-        # valid; use display_value when exact textual precision matters.
-        if actual == expected_rounded:
-            return "rounded"
-    difference = abs(actual - claim.value)
-    if claim.tolerance_abs is not None and difference <= claim.tolerance_abs:
-        return "tolerance"
-    if claim.tolerance_rel is not None:
-        if claim.value == 0:
-            relative = Decimal("Infinity")
-        else:
-            relative = difference / abs(claim.value)
-        if relative <= claim.tolerance_rel:
-            return "tolerance"
-    return "mismatch"
-
-
-def _candidate_suggestions(
-    occurrence: ClaimOccurrence, claims: list[ClaimRecord]
-) -> list[ClaimRecord]:
-    return [
-        claim
-        for claim in claims
-        if claim.status == "frozen"
-        and _units_equal(occurrence.token.unit, claim.unit)
-        and _compare_value(occurrence.token.value, claim) != "mismatch"
-        and (
-            not claim.display_value
-            or _clean_display(occurrence.token.raw) == _clean_display(claim.display_value)
-        )
-    ]
 
 
 def _finding(
@@ -170,13 +106,14 @@ def audit_project(config: ProjectConfig) -> AuditResult:
         )
 
     pass_candidates: list[str] = []
+    valid_confirmed_claim_ids: set[str] = set()
     observed_by_claim: dict[str, set[str]] = defaultdict(set)
     root = Path(config.root)
     for occurrence in scan.occurrences:
         mapping = mapping_by_occurrence.get(occurrence.occurrence_id)
         if mapping is None:
-            suggestions = _candidate_suggestions(occurrence, claims)
-            hint = ", ".join(item.claim_id for item in suggestions) or "无"
+            suggestions = candidate_matches(occurrence, claims)
+            hint = ", ".join(item.claim_id for item, _ in suggestions) or "无"
             findings.append(
                 _finding(
                     "E001",
@@ -199,7 +136,7 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     )
                 )
             continue
-        if _clean_context(mapping.context) != _clean_context(occurrence.context):
+        if normalize_text(mapping.context) != normalize_text(occurrence.context):
             findings.append(
                 _finding(
                     "E007",
@@ -235,6 +172,7 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                 )
             )
             continue
+        valid_confirmed_claim_ids.add(claim.claim_id)
         if config.require_frozen and claim.status.lower() != "frozen":
             findings.append(
                 _finding(
@@ -315,12 +253,12 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                         occurrence=occurrence,
                         claim=claim,
                         evidence_locator=evidence_locator,
-                        actual=_format_decimal(evidence.source_value),
-                        expected=_format_decimal(claim.value),
+                        actual=format_decimal(evidence.source_value),
+                        expected=format_decimal(claim.value),
                         suggestion="重新冻结结果，确保证据 CSV 和登记表来自同一次运行。",
                     )
                 )
-        if not _units_equal(occurrence.token.unit, claim.unit):
+        if not units_equal(occurrence.token.unit, claim.unit):
             findings.append(
                 _finding(
                     "E004",
@@ -334,9 +272,9 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     suggestion="统一论文显示单位和冻结登记表单位。",
                 )
             )
-        comparison = _compare_value(occurrence.token.value, claim)
-        observed_by_claim[claim.claim_id].add(_format_decimal(occurrence.token.value))
-        if claim.display_value and _clean_display(occurrence.token.raw) != _clean_display(
+        comparison = compare_value(occurrence.token.value, claim)
+        observed_by_claim[claim.claim_id].add(format_decimal(occurrence.token.value))
+        if claim.display_value and normalize_text(occurrence.token.raw) != normalize_text(
             claim.display_value
         ):
             findings.append(
@@ -346,8 +284,8 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     "论文数值的显示形式与 display_value 不一致",
                     occurrence=occurrence,
                     claim=claim,
-                    actual=_clean_display(occurrence.token.raw),
-                    expected=_clean_display(claim.display_value),
+                    actual=normalize_text(occurrence.token.raw),
+                    expected=normalize_text(claim.display_value),
                     suggestion="按冻结登记的显示值统一摘要、正文、表格和结论。",
                 )
             )
@@ -359,8 +297,8 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     "论文数值与冻结登记值不一致",
                     occurrence=occurrence,
                     claim=claim,
-                    actual=_format_decimal(occurrence.token.value),
-                    expected=_format_decimal(claim.value),
+                    actual=format_decimal(occurrence.token.value),
+                    expected=format_decimal(claim.value),
                     suggestion="检查论文是否仍引用旧模型结果，或更新冻结登记并重新复核全文。",
                 )
             )
@@ -373,8 +311,8 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     f"论文数值通过{reason}匹配，但建议人工复核显示精度",
                     occurrence=occurrence,
                     claim=claim,
-                    actual=_format_decimal(occurrence.token.value),
-                    expected=_format_decimal(claim.value),
+                    actual=format_decimal(occurrence.token.value),
+                    expected=format_decimal(claim.value),
                 )
             )
         if comparison != "mismatch":
@@ -397,6 +335,18 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                 )
             )
 
+    for claim in claims:
+        if claim.status == "frozen" and claim.claim_id not in valid_confirmed_claim_ids:
+            findings.append(
+                _finding(
+                    "W005",
+                    "warning",
+                    "冻结登记项未被当前文稿中的有效 confirmed 映射使用",
+                    claim=claim,
+                    suggestion="确认该结果是否仍应出现在论文中；如需要，请人工建立当前映射。",
+                )
+            )
+
     conflicting_claim_ids: set[str] = set()
     for claim_id, values in sorted(observed_by_claim.items()):
         if len(values) > 1:
@@ -416,7 +366,7 @@ def audit_project(config: ProjectConfig) -> AuditResult:
                     occurrence=first_occurrence,
                     claim=claim,
                     actual=", ".join(sorted(values)),
-                    expected=_format_decimal(claim.value),
+                    expected=format_decimal(claim.value),
                     suggestion="统一摘要、正文、表格和结论中的数字，并重新审计。",
                 )
             )

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modeling-evidence-auditor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Offline, deterministic evidence auditing for quantitative claims in DOCX modeling reports"
 readme = "README.md"
 requires-python = ">=3.12"

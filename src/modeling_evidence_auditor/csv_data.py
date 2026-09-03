@@ -13,7 +13,7 @@ from .models import (
     InputError,
     MappingRecord,
 )
-from .normalize import normalize_unit, parse_decimal, parse_number_text
+from .normalize import NonFiniteNumberError, normalize_unit, parse_decimal, parse_number_text
 
 REGISTRY_REQUIRED = {
     "claim_id",
@@ -36,14 +36,19 @@ ALLOWED_EVIDENCE_TYPES = {"observed", "constructed", "assumed", "model_output", 
 def _read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
+            reader = csv.DictReader(handle, strict=True)
             headers = [item.strip() for item in (reader.fieldnames or [])]
             if not headers:
                 raise InputError(f"CSV 缺少表头：{path}")
-            rows = [
-                {(key or "").strip(): (value or "").strip() for key, value in row.items()}
-                for row in reader
-            ]
+            if len(headers) != len(set(headers)):
+                raise InputError(f"CSV 包含重复表头：{path}")
+            rows: list[dict[str, str]] = []
+            for row_number, row in enumerate(reader, start=2):
+                if None in row:
+                    raise InputError(f"CSV 第 {row_number} 行字段多于表头：{path}")
+                rows.append(
+                    {(key or "").strip(): (value or "").strip() for key, value in row.items()}
+                )
             return headers, rows
     except UnicodeDecodeError as exc:
         raise InputError(f"CSV 必须是 UTF-8：{path}") from exc
@@ -59,6 +64,8 @@ def _optional_decimal(row: dict[str, str], key: str) -> Decimal | None:
         return None
     try:
         return parse_decimal(value)
+    except NonFiniteNumberError as exc:
+        raise InputError(f"{key} 必须是有限数值：{value}") from exc
     except ValueError as exc:
         raise InputError(f"{key} 不是有效数值：{value}") from exc
 
@@ -87,6 +94,10 @@ def load_registry(path: str | Path) -> list[ClaimRecord]:
             try:
                 value = parse_decimal(value_text)
                 value_unit = ""
+            except NonFiniteNumberError as exc:
+                raise InputError(
+                    f"冻结登记表第 {row_number} 行 value 必须是有限数值：{value_text!r}"
+                ) from exc
             except ValueError as exc:
                 raise InputError(
                     f"冻结登记表第 {row_number} 行 value 无法解析：{value_text!r}"
@@ -250,9 +261,13 @@ def resolve_csv_evidence(root: Path, claim: ClaimRecord) -> EvidenceResolution:
     value_text = row.get(column, "")
     try:
         value, _ = parse_number_text(value_text)
+    except NonFiniteNumberError as exc:
+        raise InputError(f"证据单元格必须是有限数值：{value_text!r}") from exc
     except ValueError:
         try:
             value = parse_decimal(value_text)
+        except NonFiniteNumberError as exc:
+            raise InputError(f"证据单元格必须是有限数值：{value_text!r}") from exc
         except ValueError:
             return EvidenceResolution(False, f"证据单元格不是数值：{value_text!r}")
     return EvidenceResolution(True, "ok", row=row, source_value=value)

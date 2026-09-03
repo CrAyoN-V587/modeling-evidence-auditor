@@ -12,7 +12,13 @@ from .config import load_project_config, safe_project_path, write_default_projec
 from .csv_data import load_mapping, load_registry
 from .docx_extract import scan_docx
 from .models import ConfigError, InputError, MeaError
-from .report import write_audit_json, write_audit_markdown, write_claims_csv
+from .report import (
+    write_audit_json,
+    write_audit_markdown,
+    write_claims_csv,
+    write_mapping_review_csv,
+)
+from .review import mapping_review_rows
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,11 +34,12 @@ def _parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("doctor", "检查配置、输入文件和可解析能力"),
         ("scan", "提取 DOCX 数值清单"),
+        ("review", "生成映射复核工作表"),
         ("audit", "执行完整证据审计"),
     ):
         command = sub.add_parser(name, help=help_text)
         command.add_argument("--config", default="mea.toml", help="项目配置 TOML")
-        if name in {"scan", "audit"}:
+        if name in {"scan", "review", "audit"}:
             command.add_argument("--out", help="相对项目根目录的报告目录")
 
     explain = sub.add_parser("explain", help="解释 audit.json 中的一条发现")
@@ -124,6 +131,25 @@ def _cmd_audit(config_path: str, override: str | None) -> int:
     return 1 if result.blocking_count else 0
 
 
+def _cmd_review(config_path: str, override: str | None) -> int:
+    try:
+        config = load_project_config(config_path)
+        output = _output_dir(config, override)
+        report = output / "mapping_review.csv"
+        rows = mapping_review_rows(config, output_path=report)
+        write_mapping_review_csv(report, rows)
+    except (MeaError, ValueError, OSError) as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+    current_count = len(
+        {row["occurrence_id"] for row in rows if row["row_kind"] == "current_occurrence"}
+    )
+    orphan_count = sum(row["row_kind"] == "orphan_mapping" for row in rows)
+    print(f"review 完成：{current_count} 个当前数字，{orphan_count} 个孤立映射")
+    print(f"mapping_review.csv：{report}")
+    return 0
+
+
 def _cmd_explain(finding_id: str, report_path: str) -> int:
     path = Path(report_path).expanduser().resolve()
     try:
@@ -148,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor(args.config)
     if args.command == "scan":
         return _cmd_scan(args.config, args.out)
+    if args.command == "review":
+        return _cmd_review(args.config, args.out)
     if args.command == "audit":
         return _cmd_audit(args.config, args.out)
     if args.command == "explain":

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
+import os
+import tempfile
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
 from . import __version__
 from .models import AuditResult, ClaimOccurrence, DocumentScan, IgnoredOccurrence, ProjectConfig
+from .review import MAPPING_REVIEW_FIELDS
 
 CLAIMS_FIELDS = [
     "occurrence_id",
@@ -76,6 +80,32 @@ def write_claims_csv(path: str | Path, scan: DocumentScan | AuditResult) -> None
         writer.writerow(CLAIMS_FIELDS)
         for row in _sorted_tokens(scan.occurrences, scan.ignored):
             writer.writerow(row)
+
+
+def write_mapping_review_csv(path: str | Path, rows: list[dict[str, str]]) -> None:
+    """Atomically replace the derived review CSV after all rows are available."""
+
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=MAPPING_REVIEW_FIELDS, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        handle = os.fdopen(descriptor, "w", encoding="utf-8", newline="")
+        descriptor = -1
+        with handle:
+            handle.write(output.getvalue())
+        os.replace(temporary, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
 
 
 def _relative_config(config: ProjectConfig) -> dict[str, str | bool]:

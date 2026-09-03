@@ -1,6 +1,13 @@
 from decimal import Decimal
 
-from modeling_evidence_auditor.normalize import extract_number_tokens, parse_number_text
+import pytest
+
+from modeling_evidence_auditor.normalize import (
+    NonFiniteNumberError,
+    extract_number_tokens,
+    parse_decimal,
+    parse_number_text,
+)
 
 
 def test_number_parser_uses_decimal_and_chinese_scale():
@@ -41,3 +48,9 @@ def test_section_marker_without_space_is_ignored():
     included, ignored = extract_number_tokens("3.1模型建立")
     assert included == []
     assert [item.raw.strip() for item in ignored] == ["3.1"]
+
+
+@pytest.mark.parametrize("value", ["NaN", "sNaN", "Infinity", "+Infinity", "-Infinity"])
+def test_decimal_parser_rejects_non_finite_values(value):
+    with pytest.raises(NonFiniteNumberError, match="有限值"):
+        parse_decimal(value)
